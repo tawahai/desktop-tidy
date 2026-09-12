@@ -1,0 +1,8 @@
+# 跨平台换行符约定：Windows 脚本用 CRLF，源码用 LF
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.ico binary
+*.png binary

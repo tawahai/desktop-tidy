@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 打包产物
+build/
+dist/
+*.spec
+
+# 由代码生成的图标与预览图（需要时运行 python dt_icon.py 重新生成）
+app.ico
+_icon_preview.png
+
+# Windows
+Thumbs.db
+desktop.ini
