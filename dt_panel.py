@@ -309,10 +309,12 @@ class OrganizerPanel(tk.Toplevel):
 
     def _on_hidden(self) -> None:
         self._dock_state = "hidden"
+        self._log_dock("已收起为顶部细边")
 
     def _on_revealed(self) -> None:
         self._dock_state = "expanded"
         self._away_since = None
+        self._log_dock("已滑出展开")
 
     def _enter_docked_state(self) -> None:
         """启动时如果上次是贴边状态，直接摆到顶边并收起。"""
@@ -349,11 +351,51 @@ class OrganizerPanel(tk.Toplevel):
         if not self.winfo_exists():
             return
         try:
+            # 动画卡住时自愈：正常情况下贴边动画不到 0.3 秒就该结束
+            if self._docking:
+                if not getattr(self, "_docking_since", 0.0):
+                    self._docking_since = time.time()
+                elif time.time() - self._docking_since > 3.0:
+                    self._docking = False
+                    self._dock_anim = None
+                    self._docking_since = 0.0
+                    self._log_dock("贴边动画超时，已强制复位")
+            else:
+                self._docking_since = 0.0
             if self.panel_cfg.get("docked") and not self._docking and self.winfo_viewable():
                 self._check_dock_mouse()
         except Exception:
             pass
         self._dock_job = self.after(REVEAL_POLL_MS, self._dock_tick)
+
+    def _log_dock(self, message: str) -> None:
+        try:
+            self.app.log_event("贴边：" + message)
+        except Exception:
+            pass
+
+    def finish_peek(self) -> None:
+        """启动提示结束后的收尾：到点就按设置收回去（鼠标在面板上才保持展开）。
+
+        不依赖鼠标"离开事件"——之前就是这里不够确定，导致开机后一直摊着不收起。
+        """
+        self._dock_suspend_until = 0.0
+        if not self.panel_cfg.get("docked"):
+            return
+        try:
+            x, y = dt_winapi.cursor_pos()
+            m = dt_winapi.window_metrics(self)
+            inside = (m["fx"] - 2 <= x <= m["fx"] + m["fw"] + 2
+                      and m["fy"] - 2 <= y <= m["fy"] + m["fh"] + 2)
+        except Exception:
+            inside = False
+        if inside:
+            self._log_dock("启动提示结束：鼠标停在面板上，保持展开")
+            return
+        self._log_dock(f"启动提示结束：收起（原状态={self._dock_state}）")
+        self._dock_state = "expanded"  # 保证下面的收起逻辑一定生效
+        self._docking = True
+        self._animate_hide()
 
     def _check_dock_mouse(self) -> None:
         import time
@@ -380,6 +422,7 @@ class OrganizerPanel(tk.Toplevel):
             self._away_since = time.time()
         elif time.time() - self._away_since >= HIDE_DELAY:
             self._away_since = None
+            self._log_dock("鼠标已离开，自动收起")
             self._animate_hide()
 
     def _sync_dock_button(self) -> None:

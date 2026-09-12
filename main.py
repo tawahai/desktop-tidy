@@ -106,9 +106,13 @@ class App:
         if not bool((self.config.get("panel") or {}).get("peek_on_start", True)):
             return
         was_hidden = bool(self.config.get("hidden_to_tray"))
+        docked = bool((self.config.get("panel") or {}).get("docked"))
         self.log_event(f"启动提示：先显示面板 {int(seconds)} 秒")
         self.show_from_tray()  # 贴边时会滑出并保持，托盘时会重新显示
-        if was_hidden:
+        # 到点确定性地收回去（只有鼠标停在面板上才保持展开）
+        self.root.after(int(seconds * 1000) + 800, self.panel.finish_peek)
+        # 开了贴边隐藏就收回成顶部细边；否则按启动前状态收回托盘
+        if was_hidden and not docked:
             self.root.after(int(seconds * 1000) + 500, self.hide_to_tray)
 
     def _apply_tool_window(self) -> None:

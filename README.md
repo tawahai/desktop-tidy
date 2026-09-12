@@ -3,7 +3,7 @@
 一个轻量的 Windows 桌面收纳程序：**所有分区集中在同一个面板窗口里**，
 不用时收进系统托盘，桌面上不留任何窗口占位。
 
-> 作者：唐小漫 ｜ 开发工具：Codex ｜ 版本：v2.5（2026-09-12）
+> 作者：唐小漫 ｜ 开发工具：Codex ｜ 版本：v2.6（2026-09-12）
 
 **English**: [README.en.md](README.en.md) — a lightweight Windows desktop organizer,
 single panel, zero dependencies, tray + edge-dock, Windows 7/10/11.
