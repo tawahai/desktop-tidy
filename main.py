@@ -76,6 +76,7 @@ class App:
         self.tray: dt_tray.TrayIcon | None = None
         self.root.after(300, self._setup_tray)
         self.root.after(400, self._apply_tool_window)
+        self.root.after(1500, self._startup_peek)
         self.root.after(30_000, self._heartbeat)
         if self.config.get("hide_desktop_icons") and dt_winapi.desktop_icons_visible():
             dt_winapi.set_desktop_icons_visible(False)
@@ -95,6 +96,20 @@ class App:
     def _root_close(self) -> None:
         self.log_event("收到宿主窗口关闭请求（已忽略并收进托盘）")
         self.hide_to_tray()
+
+    def _startup_peek(self, seconds: float = 10.0) -> None:
+        """启动后先把面板亮出来一会儿，让用户看到它，然后按设置收回去。
+
+        贴边模式：滑出来保持 10 秒，之后自动回到贴边收起；
+        托盘模式：先显示，10 秒后再收回托盘。
+        """
+        if not bool((self.config.get("panel") or {}).get("peek_on_start", True)):
+            return
+        was_hidden = bool(self.config.get("hidden_to_tray"))
+        self.log_event(f"启动提示：先显示面板 {int(seconds)} 秒")
+        self.show_from_tray()  # 贴边时会滑出并保持，托盘时会重新显示
+        if was_hidden:
+            self.root.after(int(seconds * 1000) + 500, self.hide_to_tray)
 
     def _apply_tool_window(self) -> None:
         dt_winapi.set_tool_window(self.panel, True)

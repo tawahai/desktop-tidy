@@ -13,7 +13,7 @@ APPDATA_NAME = "DesktopTidy"
 DEFAULT_CATEGORY = "其他"
 
 # 版本与作者信息（界面上「设置 → 关于」会显示这些）
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 APP_AUTHOR = "唐小漫"
 APP_TOOL = "Codex"
 APP_DATE = "2026-09-12"
@@ -137,6 +137,7 @@ def default_panel() -> dict:
         "view": "organize",
         "alpha": 1.0,
         "topmost": False,
+        "peek_on_start": True,  # 启动后先把面板显示 10 秒，再按设置收回去
     }
 
 

@@ -64,6 +64,10 @@ class SettingsView:
         self.dock_var = tk.BooleanVar(value=bool(app.config.get("panel", {}).get("docked")))
         self._check(look, "贴边自动隐藏（把面板拖到屏幕上边缘，鼠标碰到顶边就滑出来）",
                     self.dock_var, self.on_dock)
+        self.peek_var = tk.BooleanVar(
+            value=bool((app.config.get("panel") or {}).get("peek_on_start", True)))
+        self._check(look, "启动时先显示面板 10 秒（之后按上面的设置收回去）",
+                    self.peek_var, self.on_peek)
 
         desk = self._section(inner, "桌面")
         self.hide_icons_var = tk.BooleanVar(value=False)
@@ -283,6 +287,12 @@ class SettingsView:
         else:
             panel.undock()
             self.flash("已取消贴边，面板回到原来的位置")
+
+    def on_peek(self) -> None:
+        value = bool(self.peek_var.get())
+        self.app.config.setdefault("panel", {})["peek_on_start"] = value
+        self.app.save()
+        self.flash("已" + ("开启" if value else "关闭") + "「启动时先显示面板」")
 
     def on_labels(self) -> None:
         self.app.config["show_labels"] = bool(self.labels_var.get())
