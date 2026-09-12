@@ -44,3 +44,15 @@ jobs:
           gh release view $env:GITHUB_REF_NAME 2>$null
           if ($LASTEXITCODE -ne 0) { gh release create $env:GITHUB_REF_NAME --generate-notes }
           gh release upload $env:GITHUB_REF_NAME "dist/DesktopTidy.exe" --clobber
+
+      - name: Attach a zip containing the Chinese-named exe
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # GitHub 的发布接口会把非 ASCII 的附件名替换成 default.exe，
+          # 所以中文名版本打包成 zip（zip 内部文件名仍是 桌面收纳盒.exe）
+          New-Item -ItemType Directory -Path pkg -Force | Out-Null
+          Copy-Item dist/DesktopTidy.exe "pkg/桌面收纳盒.exe" -Force
+          Compress-Archive -Path "pkg/桌面收纳盒.exe" -DestinationPath "dist/DesktopTidy-CN.zip" -Force
+          gh release upload $env:GITHUB_REF_NAME "dist/DesktopTidy-CN.zip" --clobber

@@ -10,6 +10,16 @@ single panel, zero dependencies, tray + edge-dock, Windows 7/10/11.
 
 只用 Python 标准库写成，不需要安装任何第三方依赖，图标是代码画出来的。
 
+## 界面预览
+
+主面板（所有分区都在一个窗口里）：
+
+![主面板](docs/screenshot-main.png)
+
+设置页（含「关于」信息）：
+
+![设置页](docs/screenshot-settings.png)
+
 ## 怎么用
 
 1. 双击 **启动.bat**（打包过 exe 的话直接双击那个 exe）

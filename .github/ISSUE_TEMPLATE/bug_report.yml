@@ -1,0 +1,68 @@
+name: Bug 报告 / Bug report
+description: 程序出错了、行为不符合预期 / Something crashes or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！信息填得越全，定位越快。
+        Thanks for the report — the more detail, the faster the fix.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      placeholder: 例如：右键托盘图标后程序直接退出，没弹出菜单
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 双击 启动.bat
+        2. 把文件拖到「图片」分区
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: 在「设置 → 关于」里能看到，或写 Release 的 tag
+      placeholder: v2.1
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: 系统、屏幕与缩放 / OS, resolution and DPI
+      placeholder: Windows 11 23H2 / 2560x1440 / 125%
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Python 版本与运行方式 / Python and how you run it
+      placeholder: Python 3.12.4 / 源码运行（启动.bat），或 exe
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: |
+        程序异常退出时，请贴 `%APPDATA%\DesktopTidy\tray.log`
+        （含 30 秒一次的心跳和每次托盘操作）以及 `crash.log`（如果存在）。
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认 / Checklist
+      options:
+        - label: 我确认问题能在最新版本上复现 / I can reproduce it on the latest version
+

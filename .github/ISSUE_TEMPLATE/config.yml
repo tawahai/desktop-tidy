@@ -1,0 +1,6 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用说明与常见问题 / Documentation
+    url: https://github.com/tawahai/desktop-tidy#readme
+    about: 大部分问题（贴边隐藏、托盘、整理规则、兼容性）README 里都有说明
+
