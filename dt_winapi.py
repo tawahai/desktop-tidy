@@ -818,6 +818,14 @@ log("FAILED - main.py or pythonw.exe was not found")
 sys.exit(1)
 '''
 
+# VBS 只是极薄的包装：用 pythonw 运行 C 盘上的 Python 启动器
+LAUNCHER_VBS = """' Desktop Tidy autostart wrapper
+Option Explicit
+Dim sh
+Set sh = CreateObject("WScript.Shell")
+sh.Run Chr(34) & "{exe}" & Chr(34) & " " & Chr(34) & "{launcher}" & Chr(34), 0, False
+"""
+
 # 登录时触发的计划任务：比注册表 Run 项更可靠，而且会出现在任务管理器的启动列表里。
 # 注意：用 XML + InteractiveToken 创建**不需要管理员权限**（schtasks /sc onlogon 会要权限）。
 TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
@@ -853,8 +861,8 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{pythonw}</Command>
-      <Arguments>"{launcher}"</Arguments>
+      <Command>wscript.exe</Command>
+      <Arguments>"{vbs}"</Arguments>
     </Exec>
   </Actions>
 </Task>
@@ -923,12 +931,12 @@ def _startup_command() -> str:
 
 
 def launcher_vbs_path() -> Path:
-    """启动器脚本路径（放在程序目录里）。
+    """VBS 启动器路径（用户数据目录，在 C 盘）。
 
-    为什么不放"启动"文件夹：很多安全软件会锁住那个文件夹里的 .vbs/.exe，
-    写入会直接被拒绝（本机实测：普通 txt 能写，.vbs 被拒绝）。
+    不放"启动"文件夹：安全软件会锁住那里的 .vbs（实测普通 txt 能写、.vbs 被拒绝）。
+    放 C 盘是因为系统盘开机最先就绪，而程序本体在 D 盘。
     """
-    return Path(__file__).resolve().parent / LAUNCHER_VBS_NAME
+    return launcher_py_path().with_name(LAUNCHER_VBS_NAME)
 
 
 def launcher_py_path() -> Path:
@@ -963,16 +971,13 @@ def _write_py_launcher() -> bool:
 def _write_startup_launcher() -> bool:
     """生成带等待与重试的启动器脚本（不弹黑窗）。"""
     try:
-        script = Path(__file__).resolve().parent / "main.py"
         pyw = Path(sys.executable).with_name("pythonw.exe")
         exe = pyw if pyw.exists() else Path(sys.executable)
-        import dt_config
-
-        log = dt_config.appdata_dir() / "tray.log"
-        content = STARTUP_LAUNCHER.format(exe=exe, script=script, log=log)
+        content = LAUNCHER_VBS.format(exe=exe, launcher=launcher_py_path())
         target = launcher_vbs_path()
-        # VBS 内容全是 ASCII，直接按 ASCII 写，避免解释器读取时乱码
-        target.write_text(content, encoding="ascii", errors="replace")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # VBS 按 ANSI 写；内容除路径外都是 ASCII
+        target.write_text(content, encoding="mbcs", errors="replace")
         return True
     except Exception:
         return False
@@ -1002,11 +1007,8 @@ def _create_logon_task() -> bool:
         import tempfile
         from xml.sax.saxutils import escape
 
-        pyw = Path(sys.executable).with_name("pythonw.exe")
-        exe = pyw if pyw.exists() else Path(sys.executable)
         user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}"
-        xml = TASK_XML.format(user=escape(user), pythonw=escape(str(exe)),
-                              launcher=escape(str(launcher_py_path())))
+        xml = TASK_XML.format(user=escape(user), vbs=escape(str(launcher_vbs_path())))
         path = Path(tempfile.gettempdir()) / "desktop_tidy_task.xml"
         path.write_text(xml, encoding="utf-16")
         return _run_hidden(["schtasks", "/create", "/tn", TASK_NAME, "/xml", str(path), "/f"]) == 0
@@ -1025,6 +1027,7 @@ def set_autostart(on: bool) -> bool:
         if on:
             # 先写启动器（C 盘），再写注册表与计划任务（它们的命令里带启动器路径）
             _write_py_launcher()
+            _write_startup_launcher()
             _create_logon_task()
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             if on:
