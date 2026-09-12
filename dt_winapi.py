@@ -861,7 +861,7 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>wscript.exe</Command>
+      <Command>{wscript}</Command>
       <Arguments>"{vbs}"</Arguments>
     </Exec>
   </Actions>
@@ -1008,7 +1008,10 @@ def _create_logon_task() -> bool:
         from xml.sax.saxutils import escape
 
         user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}"
-        xml = TASK_XML.format(user=escape(user), vbs=escape(str(launcher_vbs_path())))
+        # 任务计划不会用 PATH 搜索，wscript 必须给完整路径
+        wscript = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe"
+        xml = TASK_XML.format(user=escape(user), vbs=escape(str(launcher_vbs_path())),
+                              wscript=escape(str(wscript)))
         path = Path(tempfile.gettempdir()) / "desktop_tidy_task.xml"
         path.write_text(xml, encoding="utf-16")
         return _run_hidden(["schtasks", "/create", "/tn", TASK_NAME, "/xml", str(path), "/f"]) == 0
@@ -1028,7 +1031,9 @@ def set_autostart(on: bool) -> bool:
             # 先写启动器（C 盘），再写注册表与计划任务（它们的命令里带启动器路径）
             _write_py_launcher()
             _write_startup_launcher()
-            _create_logon_task()
+            # 说明：曾尝试再加一条"登录计划任务"作为备用通道，但在本机环境下
+            # 任务计划调用 wscript/pythonw 都会失败（结果码 1 / 2），故不再启用。
+            _delete_logon_task()
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             if on:
                 winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, _startup_command())
