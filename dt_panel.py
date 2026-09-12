@@ -246,6 +246,16 @@ class OrganizerPanel(tk.Toplevel):
         self.app.save()
 
     def reveal(self) -> None:
+        self.reveal_and_hold(0.0)
+
+    def reveal_and_hold(self, hold_seconds: float = 10.0) -> None:
+        """把面板滑出来，并在接下来 hold_seconds 秒内不自动回缩。
+
+        用于「托盘菜单选了显示面板」「双击启动.bat」这类显式请求：
+        否则贴边模式下窗口刚滑出来，就会因为鼠标不在上面而立刻收回去。
+        """
+        if hold_seconds:
+            self._dock_suspend_until = time.time() + hold_seconds
         if not self.panel_cfg.get("docked") or self._dock_state == "expanded":
             return
         self._docking = True
@@ -356,6 +366,9 @@ class OrganizerPanel(tk.Toplevel):
         if self._dock_state == "hidden":
             if top - 2 <= y <= top + SLIVER + 4 and x0 - 6 <= x <= x1 + 6:
                 self.reveal()
+            return
+        if time.time() < getattr(self, "_dock_suspend_until", 0):
+            self._away_since = None  # 显式显示期间不自动回缩
             return
         metrics = dt_winapi.window_metrics(self)
         inside = (metrics["fx"] - 2 <= x <= metrics["fx"] + metrics["fw"] + 2

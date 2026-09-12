@@ -150,6 +150,8 @@ def _setup_prototypes() -> None:
         user32.GetClientRect.argtypes = [hwnd_p, POINTER(wintypes.RECT)]
         user32.ClientToScreen.argtypes = [hwnd_p, POINTER(wintypes.POINT)]
         user32.SetWindowPos.argtypes = [hwnd_p, hwnd_p, c_int, c_int, c_int, c_int, c_uint]
+        user32.PostMessageW.argtypes = [hwnd_p, c_uint, wintypes.WPARAM, wintypes.LPARAM]
+        user32.SetForegroundWindow.argtypes = [hwnd_p]
         getter = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
         getter.restype = ctypes.c_ssize_t
         getter.argtypes = [hwnd_p, c_int]
@@ -408,6 +410,20 @@ def focus_window_by_title(title: str) -> bool:
         hwnd = user32.FindWindowW(None, title)
         if not hwnd:
             return False
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        return True
+    except Exception:
+        return False
+
+
+def request_show(title: str, message: int = 0x8002) -> bool:
+    """给已在运行的实例发一条"把面板显示出来"的消息（双击启动.bat 时用）。"""
+    try:
+        hwnd = user32.FindWindowW(None, title)
+        if not hwnd:
+            return False
+        user32.PostMessageW(hwnd, message, 0, 0)
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.SetForegroundWindow(hwnd)
         return True

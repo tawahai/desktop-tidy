@@ -19,6 +19,7 @@ shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.c_void_p]
 
 WM_APP = 0x8000
 WM_TRAY = WM_APP + 1
+WM_SHOW_REQUEST = WM_APP + 2  # 已有实例时，用这条消息把面板叫到前面
 WM_COMMAND = 0x0111
 WM_LBUTTONUP = 0x0202
 WM_LBUTTONDBLCLK = 0x0203
@@ -82,6 +83,7 @@ class TrayIcon:
         self.on_click = None          # 回调：左键单击 / 双击
         self.on_right_click = None    # 回调：右键
         self.on_minimize = None       # 回调：点了最小化按钮
+        self.on_show_request = None   # 回调：别的进程请求把面板显示出来
         self.logger = None            # 可选日志函数（排查"莫名退出"用）
         self._sub = None
         self._last_right_click = 0.0  # 一次右键会同时发 RBUTTONUP 和 CONTEXTMENU，去重
@@ -127,6 +129,9 @@ class TrayIcon:
         if msg == WM_SYSCOMMAND and (int(wparam) & 0xFFF0) == SC_MINIMIZE:
             self._pending = "minimize"
             return 0
+        if msg == WM_SHOW_REQUEST:
+            self._pending = "show"
+            return 0
         if self._taskbar_created and msg == self._taskbar_created:
             # 资源管理器重启后要重新加回图标
             was_visible = self.visible
@@ -143,11 +148,13 @@ class TrayIcon:
             if self.logger:
                 try:
                     self.logger({"click": "托盘左键", "right": "托盘右键",
-                                 "minimize": "托盘最小化请求"}.get(pending, pending))
+                                 "minimize": "托盘最小化请求",
+                                 "show": "收到显示请求（双击启动.bat）"}.get(pending, pending))
                 except Exception:
                     pass
             callback = {"click": self.on_click, "right": self.on_right_click,
-                        "minimize": self.on_minimize, "readd": self.show}.get(pending)
+                        "minimize": self.on_minimize, "readd": self.show,
+                        "show": self.on_show_request}.get(pending)
             if callback is not None:
                 try:
                     callback()

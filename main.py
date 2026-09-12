@@ -187,6 +187,7 @@ class App:
             tray.on_click = self.toggle_from_tray
             tray.on_right_click = self.tray_menu
             tray.on_minimize = self.panel._on_close
+            tray.on_show_request = self.show_from_tray
             tray.logger = self.log_event
             self.tray = tray
             if not tray.hicon:
@@ -244,7 +245,7 @@ class App:
             self.panel.deiconify()
             self.panel.lift()
             if self.panel.panel_cfg.get("docked"):
-                self.panel.reveal()
+                self.panel.reveal_and_hold(10.0)  # 显式显示时先保持 10 秒，别马上又缩回去
         except Exception:
             pass
         if self.tray is not None:
@@ -561,7 +562,8 @@ def write_crash_log(exc_text: str) -> None:
 def main() -> int:
     dt_winapi.make_dpi_aware()
     if not single_instance():
-        if not dt_winapi.focus_window_by_title(WINDOW_TITLE):
+        # 已经在运行：直接把它的面板叫到前面来（贴边隐藏时也能弹出来）
+        if not dt_winapi.request_show(WINDOW_TITLE):
             try:
                 root = tk.Tk()
                 root.withdraw()

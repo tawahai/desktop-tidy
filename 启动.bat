@@ -6,6 +6,11 @@ if %errorlevel%==0 (
     start "" pythonw "main.py"
     exit /b
 )
+where pyw >nul 2>nul
+if %errorlevel%==0 (
+    start "" pyw "main.py"
+    exit /b
+)
 where python >nul 2>nul
 if %errorlevel%==0 (
     start "" python "main.py"
