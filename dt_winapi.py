@@ -761,7 +761,62 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "桌面收纳盒"          # 用中文名，任务管理器的启动列表里能认出来
 LEGACY_RUN_NAME = "DesktopTidy"  # 旧版用的名字，启用时顺手清掉
 LAUNCHER_VBS_NAME = "自启.vbs"
+LAUNCHER_PY_NAME = "自启.py"
 TASK_NAME = "桌面收纳盒"
+
+# C 盘上的启动器（Python 脚本，由 pythonw 执行）。
+# 放 C 盘是因为系统盘开机最先就绪，而程序本体在 D 盘：启动器负责等 D 盘就绪、再拉起程序。
+LAUNCHER_PY = '''# -*- coding: utf-8 -*-
+"""桌面收纳盒 开机启动器（由 pythonw.exe 执行，程序本体在 D 盘时用它等待磁盘就绪）。"""
+import ctypes
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+MAIN = Path(r"{main}")
+PYTHONW = Path(r"{pythonw}")
+LOG = Path(r"{log}")
+TITLE = "{title}"
+
+
+def log(message: str) -> None:
+    try:
+        with LOG.open("a", encoding="utf-8") as handle:
+            handle.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  [launcher] " + message + "\\n")
+    except Exception:
+        pass
+
+
+def app_running() -> bool:
+    try:
+        user32 = ctypes.WinDLL("user32")
+        user32.FindWindowW.restype = ctypes.c_void_p
+        return bool(user32.FindWindowW(None, TITLE))
+    except Exception:
+        return False
+
+
+time.sleep({wait})
+if app_running():
+    log("already running, skipped")
+    sys.exit(0)
+
+for attempt in range(1, {retries} + 1):
+    if MAIN.exists() and PYTHONW.exists():
+        try:
+            subprocess.Popen([str(PYTHONW), str(MAIN)], cwd=str(MAIN.parent),
+                             creationflags=0x00000008)  # DETACHED_PROCESS
+            log("started the app (attempt %d)" % attempt)
+            sys.exit(0)
+        except Exception as exc:
+            log("failed to start: %r" % (exc,))
+            sys.exit(1)
+    time.sleep(10)
+
+log("FAILED - main.py or pythonw.exe was not found")
+sys.exit(1)
+'''
 
 # 登录时触发的计划任务：比注册表 Run 项更可靠，而且会出现在任务管理器的启动列表里。
 # 注意：用 XML + InteractiveToken 创建**不需要管理员权限**（schtasks /sc onlogon 会要权限）。
@@ -798,8 +853,8 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>wscript.exe</Command>
-      <Arguments>"{vbs}"</Arguments>
+      <Command>{pythonw}</Command>
+      <Arguments>"{launcher}"</Arguments>
     </Exec>
   </Actions>
 </Task>
@@ -857,13 +912,13 @@ End Sub
 def _startup_command() -> str:
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
-    launcher = launcher_vbs_path()
-    if launcher.exists():
-        # 用系统自带的 wscript 执行启动器：它会等系统就绪、失败重试、并记录日志
-        return f'wscript.exe "{launcher}"'
-    script = Path(__file__).resolve().parent / "main.py"
+    launcher = launcher_py_path()
     pyw = Path(sys.executable).with_name("pythonw.exe")
     exe = pyw if pyw.exists() else Path(sys.executable)
+    if launcher.exists():
+        # 启动器在 C 盘：它负责等 D 盘就绪、再拉起程序（并写日志）
+        return f'"{exe}" "{launcher}"'
+    script = Path(__file__).resolve().parent / "main.py"
     return f'"{exe}" "{script}"'
 
 
@@ -874,6 +929,35 @@ def launcher_vbs_path() -> Path:
     写入会直接被拒绝（本机实测：普通 txt 能写，.vbs 被拒绝）。
     """
     return Path(__file__).resolve().parent / LAUNCHER_VBS_NAME
+
+
+def launcher_py_path() -> Path:
+    """启动器（Python 版）路径——放在用户数据目录（C 盘）。"""
+    try:
+        import dt_config
+
+        return dt_config.appdata_dir() / LAUNCHER_PY_NAME
+    except Exception:
+        return Path(os.environ.get("APPDATA", ".")) / "DesktopTidy" / LAUNCHER_PY_NAME
+
+
+def _write_py_launcher() -> bool:
+    """生成 C 盘上的启动器脚本，供注册表项和计划任务调用。"""
+    try:
+        import dt_config
+
+        script = Path(__file__).resolve().parent / "main.py"
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        exe = pyw if pyw.exists() else Path(sys.executable)
+        log = dt_config.appdata_dir() / "tray.log"
+        content = LAUNCHER_PY.format(main=script, pythonw=exe, log=log, title="桌面收纳盒",
+                                     wait=12, retries=6)
+        target = launcher_py_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 
 def _write_startup_launcher() -> bool:
@@ -918,8 +1002,11 @@ def _create_logon_task() -> bool:
         import tempfile
         from xml.sax.saxutils import escape
 
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        exe = pyw if pyw.exists() else Path(sys.executable)
         user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}"
-        xml = TASK_XML.format(user=escape(user), vbs=escape(str(launcher_vbs_path())))
+        xml = TASK_XML.format(user=escape(user), pythonw=escape(str(exe)),
+                              launcher=escape(str(launcher_py_path())))
         path = Path(tempfile.gettempdir()) / "desktop_tidy_task.xml"
         path.write_text(xml, encoding="utf-16")
         return _run_hidden(["schtasks", "/create", "/tn", TASK_NAME, "/xml", str(path), "/f"]) == 0
@@ -936,8 +1023,8 @@ def set_autostart(on: bool) -> bool:
         import winreg
 
         if on:
-            # 先写启动器，再写注册表（注册表命令里带它的路径）
-            _write_startup_launcher()
+            # 先写启动器（C 盘），再写注册表与计划任务（它们的命令里带启动器路径）
+            _write_py_launcher()
             _create_logon_task()
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             if on:
@@ -954,6 +1041,10 @@ def set_autostart(on: bool) -> bool:
                         pass
         if not on:
             _remove_startup_launcher()
+            try:
+                launcher_py_path().unlink(missing_ok=True)
+            except Exception:
+                pass
             _delete_logon_task()
         return True
     except Exception:
@@ -968,7 +1059,7 @@ def autostart_enabled() -> bool:
             winreg.QueryValueEx(key, RUN_NAME)
         return True
     except Exception:
-        return launcher_vbs_path().exists()
+        return launcher_vbs_path().exists() or launcher_py_path().exists()
 
 
 # --------------------------------------------------------------------- 拖入文件
