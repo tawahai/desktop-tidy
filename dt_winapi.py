@@ -759,21 +759,111 @@ def send_to_recycle_bin(paths: list[Path]) -> bool:
 # --------------------------------------------------------------------- 开机自启
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "DesktopTidy"
+LAUNCHER_VBS_NAME = "自启.vbs"
+
+# 启动文件夹里的启动器：等系统就绪再拉起程序，失败会重试，并把结果写进日志。
+# 之所以不只靠注册表 Run 项：开机时 Run 项可能排在最前面执行，那时程序所在磁盘还没就绪，
+# 命令会静默失败（我们的实例就遇到过：Run 项存在且启用，但进程从没起来）。
+STARTUP_LAUNCHER = """' Desktop Tidy autostart launcher
+' Waits for the system to be ready, then starts the app and logs what happened.
+Option Explicit
+Dim sh, fso, wmi, procs, p, exePath, scriptPath, logPath, f, i
+Set sh = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+exePath = "{exe}"
+scriptPath = "{script}"
+logPath = "{log}"
+
+WScript.Sleep 12000
+
+' 已经在运行就不再启动
+On Error Resume Next
+Set wmi = GetObject("winmgmts:\\\\.\\root\\cimv2")
+Set procs = wmi.ExecQuery("SELECT CommandLine FROM Win32_Process WHERE Name='pythonw.exe'")
+For Each p In procs
+    If InStr(p.CommandLine, "main.py") > 0 Then
+        WriteLog "autostart: already running, skipped"
+        WScript.Quit 0
+    End If
+Next
+On Error Goto 0
+
+' 等磁盘/文件就绪再启动，最多试 6 次
+For i = 1 To 6
+    If fso.FileExists(exePath) And fso.FileExists(scriptPath) Then
+        sh.Run Chr(34) & exePath & Chr(34) & " " & Chr(34) & scriptPath & Chr(34), 0, False
+        WriteLog "autostart: started the app (attempt " & i & ")"
+        WScript.Quit 0
+    End If
+    WScript.Sleep 10000
+Next
+WriteLog "autostart: FAILED - pythonw.exe or main.py was not found"
+
+Sub WriteLog(msg)
+    On Error Resume Next
+    Set f = fso.OpenTextFile(logPath, 8, True)
+    f.WriteLine Year(Now) & "-" & Right("0" & Month(Now), 2) & "-" & Right("0" & Day(Now), 2) & " " & _
+        Right("0" & Hour(Now), 2) & ":" & Right("0" & Minute(Now), 2) & ":" & Right("0" & Second(Now), 2) & _
+        "  [launcher] " & msg
+    f.Close
+End Sub
+"""
 
 
 def _startup_command() -> str:
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
+    launcher = launcher_vbs_path()
+    if launcher.exists():
+        # 用系统自带的 wscript 执行启动器：它会等系统就绪、失败重试、并记录日志
+        return f'wscript.exe "{launcher}"'
     script = Path(__file__).resolve().parent / "main.py"
     pyw = Path(sys.executable).with_name("pythonw.exe")
     exe = pyw if pyw.exists() else Path(sys.executable)
     return f'"{exe}" "{script}"'
 
 
+def launcher_vbs_path() -> Path:
+    """启动器脚本路径（放在程序目录里）。
+
+    为什么不放"启动"文件夹：很多安全软件会锁住那个文件夹里的 .vbs/.exe，
+    写入会直接被拒绝（本机实测：普通 txt 能写，.vbs 被拒绝）。
+    """
+    return Path(__file__).resolve().parent / LAUNCHER_VBS_NAME
+
+
+def _write_startup_launcher() -> bool:
+    """生成带等待与重试的启动器脚本（不弹黑窗）。"""
+    try:
+        script = Path(__file__).resolve().parent / "main.py"
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        exe = pyw if pyw.exists() else Path(sys.executable)
+        import dt_config
+
+        log = dt_config.appdata_dir() / "tray.log"
+        content = STARTUP_LAUNCHER.format(exe=exe, script=script, log=log)
+        target = launcher_vbs_path()
+        # VBS 内容全是 ASCII，直接按 ASCII 写，避免解释器读取时乱码
+        target.write_text(content, encoding="ascii", errors="replace")
+        return True
+    except Exception:
+        return False
+
+
+def _remove_startup_launcher() -> None:
+    try:
+        launcher_vbs_path().unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def set_autostart(on: bool) -> bool:
     try:
         import winreg
 
+        if on:
+            # 先写启动器，再写注册表（注册表命令里带它的路径）
+            wrote_launcher = _write_startup_launcher()
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             if on:
                 winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, _startup_command())
@@ -782,6 +872,8 @@ def set_autostart(on: bool) -> bool:
                     winreg.DeleteValue(key, RUN_NAME)
                 except FileNotFoundError:
                     pass
+        if not on:
+            _remove_startup_launcher()
         return True
     except Exception:
         return False
@@ -795,7 +887,7 @@ def autostart_enabled() -> bool:
             winreg.QueryValueEx(key, RUN_NAME)
         return True
     except Exception:
-        return False
+        return startup_launcher_path().exists()
 
 
 # --------------------------------------------------------------------- 拖入文件
