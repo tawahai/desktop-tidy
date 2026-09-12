@@ -758,8 +758,52 @@ def send_to_recycle_bin(paths: list[Path]) -> bool:
 
 # --------------------------------------------------------------------- 开机自启
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_NAME = "DesktopTidy"
+RUN_NAME = "桌面收纳盒"          # 用中文名，任务管理器的启动列表里能认出来
+LEGACY_RUN_NAME = "DesktopTidy"  # 旧版用的名字，启用时顺手清掉
 LAUNCHER_VBS_NAME = "自启.vbs"
+TASK_NAME = "桌面收纳盒"
+
+# 登录时触发的计划任务：比注册表 Run 项更可靠，而且会出现在任务管理器的启动列表里。
+# 注意：用 XML + InteractiveToken 创建**不需要管理员权限**（schtasks /sc onlogon 会要权限）。
+TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>桌面收纳盒 开机自启</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{user}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>wscript.exe</Command>
+      <Arguments>"{vbs}"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
 
 # 启动文件夹里的启动器：等系统就绪再拉起程序，失败会重试，并把结果写进日志。
 # 之所以不只靠注册表 Run 项：开机时 Run 项可能排在最前面执行，那时程序所在磁盘还没就绪，
@@ -857,23 +901,60 @@ def _remove_startup_launcher() -> None:
         pass
 
 
+def _run_hidden(args: list[str]) -> int:
+    """不弹黑窗地跑一个外部命令，返回退出码（失败返回 -1）。"""
+    try:
+        import subprocess
+
+        return subprocess.run(args, creationflags=0x08000000,  # CREATE_NO_WINDOW
+                              capture_output=True).returncode
+    except Exception:
+        return -1
+
+
+def _create_logon_task() -> bool:
+    """创建"登录时运行"的计划任务（用 XML + 交互式令牌，无需管理员权限）。"""
+    try:
+        import tempfile
+        from xml.sax.saxutils import escape
+
+        user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}"
+        xml = TASK_XML.format(user=escape(user), vbs=escape(str(launcher_vbs_path())))
+        path = Path(tempfile.gettempdir()) / "desktop_tidy_task.xml"
+        path.write_text(xml, encoding="utf-16")
+        return _run_hidden(["schtasks", "/create", "/tn", TASK_NAME, "/xml", str(path), "/f"]) == 0
+    except Exception:
+        return False
+
+
+def _delete_logon_task() -> None:
+    _run_hidden(["schtasks", "/delete", "/tn", TASK_NAME, "/f"])
+
+
 def set_autostart(on: bool) -> bool:
     try:
         import winreg
 
         if on:
             # 先写启动器，再写注册表（注册表命令里带它的路径）
-            wrote_launcher = _write_startup_launcher()
+            _write_startup_launcher()
+            _create_logon_task()
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             if on:
                 winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, _startup_command())
-            else:
-                try:
-                    winreg.DeleteValue(key, RUN_NAME)
+                try:  # 清掉旧版用的名字
+                    winreg.DeleteValue(key, LEGACY_RUN_NAME)
                 except FileNotFoundError:
                     pass
+            else:
+                for name in (RUN_NAME, LEGACY_RUN_NAME):
+                    try:
+                        winreg.DeleteValue(key, name)
+                    except FileNotFoundError:
+                        pass
         if not on:
             _remove_startup_launcher()
+            _delete_logon_task()
         return True
     except Exception:
         return False
@@ -887,7 +968,7 @@ def autostart_enabled() -> bool:
             winreg.QueryValueEx(key, RUN_NAME)
         return True
     except Exception:
-        return startup_launcher_path().exists()
+        return launcher_vbs_path().exists()
 
 
 # --------------------------------------------------------------------- 拖入文件
