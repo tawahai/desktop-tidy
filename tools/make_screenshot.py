@@ -24,6 +24,17 @@ import dt_winapi  # noqa: E402
 
 SRCCOPY = 0x00CC0020
 
+# 本程序的配色（用于自检：确认截到的确实是我们的面板，而不是被别的窗口盖住）
+APP_PALETTE = (
+    (0x1B, 0x20, 0x27),  # 面板底色
+    (0x27, 0x2E, 0x38),  # 分区卡片
+    (0x16, 0x1A, 0x20),  # 分区内容底色
+    (0x31, 0x39, 0x47),  # 悬停色
+    (0x24, 0x2A, 0x33),  # 菜单底色
+)
+PALETTE_TOLERANCE = 14
+MIN_PALETTE_RATIO = 0.5
+
 SAMPLES = {
     "文档": ["季度汇报.docx", "会议纪要.md", "产品需求.pdf", "报价单.xlsx"],
     "图片": ["截图_001.png", "旅行照片.jpg", "背景图.webp"],
@@ -46,6 +57,9 @@ gdi32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
 gdi32.BitBlt.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                          ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
 gdi32.DeleteDC.argtypes = [ctypes.c_void_p]
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+user32.SetForegroundWindow.restype = wintypes.BOOL
 
 
 def grab(x: int, y: int, width: int, height: int) -> bytes:
@@ -80,6 +94,24 @@ def pump(app, seconds: float) -> None:
         time.sleep(0.02)
 
 
+def palette_ratio(pixels: bytes, width: int, height: int, step: int = 2) -> float:
+    """统计属于本程序配色的像素比例，用来判断截图有没有被别的窗口盖住。"""
+    total = 0
+    hit = 0
+    for y in range(0, height, step):
+        row = y * width * 4
+        for x in range(0, width, step):
+            i = row + x * 4
+            r, g, b = pixels[i], pixels[i + 1], pixels[i + 2]
+            total += 1
+            for pr, pg, pb in APP_PALETTE:
+                if (abs(r - pr) <= PALETTE_TOLERANCE and abs(g - pg) <= PALETTE_TOLERANCE
+                        and abs(b - pb) <= PALETTE_TOLERANCE):
+                    hit += 1
+                    break
+    return hit / total if total else 0.0
+
+
 def build_config(tmp: Path) -> dict:
     root = tmp / "收纳盒"
     cfg = dt_config.default_config()
@@ -97,11 +129,25 @@ def build_config(tmp: Path) -> dict:
     return cfg
 
 
-def capture(panel, path: Path) -> None:
+def capture(app, panel, path: Path) -> bool:
+    """把面板切到前台再截图，并自检画面确实是本程序。"""
+    hwnd = dt_winapi.window_frame_hwnd(panel)
+    user32.SetForegroundWindow(hwnd)
+    panel.lift()
+    panel.focus_force()
+    pump(app, 0.6)
     metrics = dt_winapi.window_metrics(panel)
     pixels = grab(metrics["cx"], metrics["cy"], metrics["cw"], metrics["ch"])
-    path.write_bytes(dt_winapi.png_encode(metrics["cw"], metrics["ch"], pixels))
-    print(f"已保存 {path.name}（{metrics['cw']}x{metrics['ch']}）")
+    ratio = palette_ratio(pixels, metrics["cw"], metrics["ch"])
+    ok = ratio >= MIN_PALETTE_RATIO
+    if ok:
+        path.write_bytes(dt_winapi.png_encode(metrics["cw"], metrics["ch"], pixels))
+        print(f"已保存 {path.name}（{metrics['cw']}x{metrics['ch']}，"
+              f"面板配色占比 {ratio:.0%}）")
+    else:
+        print(f"截图自检未通过：{path.name} 里只有 {ratio:.0%} 的像素属于本程序，"
+              f"可能被其它窗口盖住了")
+    return ok
 
 
 def main() -> int:
@@ -116,18 +162,27 @@ def main() -> int:
     out_dir = Path(__file__).resolve().parent.parent / "docs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    previous_foreground = user32.GetForegroundWindow()
     app = app_main.App(cfg)
     panel = app.panel
+    panel.attributes("-topmost", True)  # 截图期间置顶，避免被别的窗口盖住
     pump(app, 1.4)
-    capture(panel, out_dir / "screenshot-main.png")
+
+    results = [capture(app, panel, out_dir / "screenshot-main.png")]
 
     panel.show_view("settings")
     pump(app, 1.2)
-    capture(panel, out_dir / "screenshot-settings.png")
+    results.append(capture(app, panel, out_dir / "screenshot-settings.png"))
 
+    panel.attributes("-topmost", False)
+    if previous_foreground:
+        user32.SetForegroundWindow(previous_foreground)  # 把焦点还给原来的窗口
     app.quit()
-    print("完成")
-    return 0
+    if all(results):
+        print("完成")
+        return 0
+    print("有截图未通过自检，请重跑（或手动截图）")
+    return 1
 
 
 if __name__ == "__main__":
