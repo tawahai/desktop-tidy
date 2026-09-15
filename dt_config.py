@@ -13,7 +13,7 @@ APPDATA_NAME = "DesktopTidy"
 DEFAULT_CATEGORY = "其他"
 
 # 版本与作者信息（界面上「设置 → 关于」会显示这些）
-APP_VERSION = "2.7"
+APP_VERSION = "2.8"
 APP_AUTHOR = "唐小漫"
 APP_TOOL = "Codex"
 APP_DATE = "2026-09-12"

@@ -758,8 +758,10 @@ def send_to_recycle_bin(paths: list[Path]) -> bool:
 
 # --------------------------------------------------------------------- 开机自启
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_NAME = "桌面收纳盒"          # 用中文名，任务管理器的启动列表里能认出来
+RUN_NAME = "DesktopTidy"         # 注册表值名用 ASCII：中文名会让 Windows 的启动项子系统忽略它
+RUN_NAME_CN = "桌面收纳盒"        # 旧的中文名，启用时顺手清掉
 LEGACY_RUN_NAME = "DesktopTidy"  # 旧版用的名字，启用时顺手清掉
+SHORTCUT_NAME = "桌面收纳盒.lnk"   # 启动文件夹里的快捷方式（名字是给人看的）
 LAUNCHER_VBS_NAME = "自启.vbs"
 LAUNCHER_PY_NAME = "自启.py"
 TASK_NAME = "桌面收纳盒"
@@ -1023,6 +1025,65 @@ def _delete_logon_task() -> None:
     _run_hidden(["schtasks", "/delete", "/tn", TASK_NAME, "/f"])
 
 
+def startup_folder() -> Path:
+    """启动文件夹路径（优先读注册表，兼容用户目录被重定向）。"""
+    try:
+        import winreg
+
+        key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
+            value, _ = winreg.QueryValueEx(handle, "Startup")
+        path = Path(os.path.expandvars(value))
+        if path.exists():
+            return path
+    except Exception:
+        pass
+    base = os.environ.get("APPDATA") or str(Path.home())
+    return Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def startup_shortcut_path() -> Path:
+    return startup_folder() / SHORTCUT_NAME
+
+
+def _create_startup_shortcut() -> bool:
+    """在"启动"文件夹里建快捷方式（最标准、任务管理器一定会列出的自启方式）。
+
+    注意：这个文件夹里放 .vbs 会被安全软件拒绝（本机实测），但放 .lnk 没问题。
+    """
+    try:
+        import dt_config
+
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        launcher = launcher_py_path()
+        if not launcher.exists():
+            return False
+        script_path = dt_config.appdata_dir() / "make_shortcut.ps1"
+        script = (
+            "$ErrorActionPreference = 'Stop'\n"
+            "$sh = New-Object -ComObject WScript.Shell\n"
+            f"$sc = $sh.CreateShortcut('{startup_shortcut_path()}')\n"
+            f"$sc.TargetPath = '{pyw}'\n"
+            f"$sc.Arguments = '\"{launcher}\"'\n"
+            f"$sc.WorkingDirectory = '{Path(__file__).resolve().parent}'\n"
+            "$sc.Description = 'Desktop Tidy'\n"
+            "$sc.Save()\n"
+        )
+        # 带 BOM 写，PowerShell 才能正确读取中文路径
+        script_path.write_text(script, encoding="utf-8-sig")
+        return _run_hidden(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-File", str(script_path)]) == 0
+    except Exception:
+        return False
+
+
+def _remove_startup_shortcut() -> None:
+    try:
+        startup_shortcut_path().unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def set_autostart(on: bool) -> bool:
     try:
         import winreg
@@ -1030,25 +1091,27 @@ def set_autostart(on: bool) -> bool:
         if on:
             # 先写启动器（C 盘），再写注册表与计划任务（它们的命令里带启动器路径）
             _write_py_launcher()
-            _write_startup_launcher()
-            # 说明：曾尝试再加一条"登录计划任务"作为备用通道，但在本机环境下
-            # 任务计划调用 wscript/pythonw 都会失败（结果码 1 / 2），故不再启用。
+            _create_startup_shortcut()
+            # 说明：曾尝试"登录计划任务"通道，但在本机环境下任务计划调用
+            # wscript/pythonw 都会失败（结果码 1 / 2），故不再启用。
             _delete_logon_task()
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             if on:
                 winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, _startup_command())
-                try:  # 清掉旧版用的名字
-                    winreg.DeleteValue(key, LEGACY_RUN_NAME)
-                except FileNotFoundError:
-                    pass
+                for legacy in (RUN_NAME_CN,):  # 清掉以前用中文名写的那条
+                    try:
+                        winreg.DeleteValue(key, legacy)
+                    except FileNotFoundError:
+                        pass
             else:
-                for name in (RUN_NAME, LEGACY_RUN_NAME):
+                for name in (RUN_NAME, RUN_NAME_CN, LEGACY_RUN_NAME):
                     try:
                         winreg.DeleteValue(key, name)
                     except FileNotFoundError:
                         pass
         if not on:
             _remove_startup_launcher()
+            _remove_startup_shortcut()
             try:
                 launcher_py_path().unlink(missing_ok=True)
             except Exception:
