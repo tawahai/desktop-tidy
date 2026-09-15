@@ -922,6 +922,9 @@ End Sub
 def _startup_command() -> str:
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
+    exe = frozen_exe_path()
+    if exe.exists():
+        return f'"{exe}"'   # 有独立 exe 就直接用它（普通程序，最不容易被拦）
     launcher = launcher_py_path()
     pyw = Path(sys.executable).with_name("pythonw.exe")
     exe = pyw if pyw.exists() else Path(sys.executable)
@@ -949,6 +952,19 @@ def launcher_py_path() -> Path:
         return dt_config.appdata_dir() / LAUNCHER_PY_NAME
     except Exception:
         return Path(os.environ.get("APPDATA", ".")) / "DesktopTidy" / LAUNCHER_PY_NAME
+
+
+def frozen_exe_path() -> Path:
+    """独立 exe 的路径（用户数据目录，C 盘）。
+
+    自启优先用它：exe 是"普通程序"，比"pythonw 跑脚本"这种模式更不容易被杀软拦。
+    """
+    try:
+        import dt_config
+
+        return dt_config.appdata_dir() / "DesktopTidy.exe"
+    except Exception:
+        return Path(os.environ.get("APPDATA", ".")) / "DesktopTidy" / "DesktopTidy.exe"
 
 
 def _write_py_launcher() -> bool:
@@ -1056,16 +1072,21 @@ def _create_startup_shortcut() -> bool:
 
         pyw = Path(sys.executable).with_name("pythonw.exe")
         launcher = launcher_py_path()
-        if not launcher.exists():
+        exe = frozen_exe_path()
+        if exe.exists():
+            target, arguments = str(exe), ""
+        elif launcher.exists():
+            target, arguments = str(pyw), f'"{launcher}"'
+        else:
             return False
         script_path = dt_config.appdata_dir() / "make_shortcut.ps1"
         script = (
             "$ErrorActionPreference = 'Stop'\n"
             "$sh = New-Object -ComObject WScript.Shell\n"
             f"$sc = $sh.CreateShortcut('{startup_shortcut_path()}')\n"
-            f"$sc.TargetPath = '{pyw}'\n"
-            f"$sc.Arguments = '\"{launcher}\"'\n"
-            f"$sc.WorkingDirectory = '{Path(__file__).resolve().parent}'\n"
+            f"$sc.TargetPath = '{target}'\n"
+            f"$sc.Arguments = '{arguments}'\n"
+            f"$sc.WorkingDirectory = '{Path(target).parent}'\n"
             "$sc.Description = 'Desktop Tidy'\n"
             "$sc.Save()\n"
         )
