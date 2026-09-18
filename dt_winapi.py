@@ -287,6 +287,9 @@ def _hicon_to_rgba(hicon) -> tuple[int, int, bytes] | None:
             if not color or len(color) < width * height * 4:
                 return None
             pixels = bytearray(color[: width * height * 4])
+            # GetDIBits 给出的是 BGRA 顺序，而 PNG / PhotoImage 需要 RGBA：
+            # 不换这一步，图标就会整体红蓝互换（黄色文件夹会变成青蓝色）。
+            pixels[0::4], pixels[2::4] = pixels[2::4], pixels[0::4]
             if not any(pixels[i] for i in range(3, len(pixels), 4)) and info.hbmMask:
                 mask = _get_dib(hdc, info.hbmMask, width, height, 1)
                 if mask:

@@ -740,6 +740,8 @@ class OrganizerPanel(tk.Toplevel):
             if section["box"].get("collapsed") and not force:
                 continue
             self.refresh_section(section, force=force)
+        # 各分区重建后，面板级列表里可能还留着已销毁的旧控件，这里重新汇总一次
+        self.items = [pair for section in self.sections.values() for pair in section["items"]]
         self.update_summary()
 
     def _make_item(self, section: dict, path: Path) -> None:
@@ -769,6 +771,10 @@ class OrganizerPanel(tk.Toplevel):
                              font=self.app.font("item"), wraplength=item_w - 4, justify="center")
             label.pack(fill="x", padx=1)
             widgets.append(label)
+        else:
+            label = None
+        # 记下来，切换选中状态时原地改颜色（不重建控件——重建会让"双击"失效）
+        frame._name_label = label  # type: ignore[attr-defined]
 
         for widget in widgets:
             widget.bind("<Button-1>", lambda e, p=path: self._on_item_press(e, p))
@@ -816,13 +822,32 @@ class OrganizerPanel(tk.Toplevel):
         if not self.selected:
             return
         self.selected.clear()
-        self.refresh_sections(force=True)
+        self._apply_selection_visuals()
 
     def select(self, path: Path, additive: bool) -> None:
         if not additive:
             self.selected.clear()
         self.selected.add(str(path))
-        self.refresh_sections(force=True)
+        self._apply_selection_visuals()
+
+    def _apply_selection_visuals(self) -> None:
+        """原地更新选中外观。
+
+        以前这里是 refresh_sections(force=True)：点一下就把所有图标控件销毁重建，
+        于是"双击"永远等不到第二次点击（控件已经不存在了），单击看起来也像没反应。
+        """
+        for item_path, frame in self.items:
+            try:
+                selected = str(item_path) in self.selected
+                bg = SEL_BG if selected else BODY
+                frame.configure(bg=bg)
+                for child in frame.winfo_children():
+                    child.configure(bg=bg)
+                label = getattr(frame, "_name_label", None)
+                if label is not None:
+                    label.configure(fg=TEXT if selected else DIM)
+            except Exception:
+                continue
 
     def delete_selected(self) -> None:
         if self.selected:
