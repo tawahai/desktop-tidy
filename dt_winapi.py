@@ -1200,6 +1200,9 @@ class FileDropHook:
 
     def _wndproc(self, hwnd, msg, wparam, lparam):
         if msg == WM_DROPFILES:
+            import dt_diag
+
+            dt_diag.event(f"拖放：收到 WM_DROPFILES（窗口=0x{hwnd:X}）")
             try:
                 hdrop = c_void_p(wparam)
                 count = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
@@ -1209,10 +1212,14 @@ class FileDropHook:
                     if shell32.DragQueryFileW(hdrop, i, buf, 32768):
                         paths.append(buf.value)
                 shell32.DragFinish(hdrop)
+                dt_diag.event(f"拖放：解析出 {len(paths)} 个路径 {paths[:3]}")
                 if paths:
                     self.callback(paths)
-            except Exception:
-                pass
+                dt_diag.event("拖放：已交给界面处理")
+            except Exception as exc:
+                import traceback
+
+                dt_diag.event("拖放：处理失败 " + traceback.format_exc().replace("\n", " | "))
             return 0
         if self._old:
             return user32.CallWindowProcW(self._old, hwnd, msg, wparam, lparam)

@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
 
 import dt_config
+import dt_diag
 import dt_organize
 import dt_ui
 import dt_winapi
@@ -736,6 +738,7 @@ class OrganizerPanel(tk.Toplevel):
         self.update_summary()
 
     def refresh_sections(self, force: bool = False) -> None:
+        dt_diag.detail(f"刷新面板：开始 force={force} 分区数={len(self.sections)}")
         for section in list(self.sections.values()):
             if section["box"].get("collapsed") and not force:
                 continue
@@ -743,6 +746,7 @@ class OrganizerPanel(tk.Toplevel):
         # 各分区重建后，面板级列表里可能还留着已销毁的旧控件，这里重新汇总一次
         self.items = [pair for section in self.sections.values() for pair in section["items"]]
         self.update_summary()
+        dt_diag.detail(f"刷新面板：完成 控件数={len(self.items)}")
 
     def _make_item(self, section: dict, path: Path) -> None:
         body = section["body"]
@@ -754,7 +758,9 @@ class OrganizerPanel(tk.Toplevel):
         frame = tk.Frame(body, bg=bg, width=item_w, height=size + (44 if show_label else 20))
         frame.pack_propagate(False)
 
+        dt_diag.detail(f"图标：{path.name} 开始提取")
         photo = self.app.photo(path, size)
+        dt_diag.detail(f"图标：{path.name} 提取结束 ok={photo is not None}")
         if photo is not None:
             icon = tk.Label(frame, image=photo, bg=bg, bd=0)
             icon.image = photo  # type: ignore[attr-defined]
@@ -956,23 +962,32 @@ class OrganizerPanel(tk.Toplevel):
                 pass
 
     def _queue_external_drop(self, paths: list[str]) -> None:
+        dt_diag.event(f"拖放：窗口过程把 {len(paths)} 个路径排进界面队列")
         try:
             self.after(0, lambda: self._on_external_drop(paths))
+            dt_diag.event("拖放：已用 after(0) 排好队")
         except Exception:
-            pass
+            dt_diag.note_exception("拖放排队", *sys.exc_info())
 
     def _on_external_drop(self, paths: list[str]) -> None:
+        dt_diag.event(f"拖放：界面开始处理 {len(paths)} 个路径")
         self.clear_selection()
+        x = y = -1
         try:
             x, y = self.winfo_pointerxy()
             section = self.section_at(x, y)
         except Exception:
+            dt_diag.note_exception("拖放定位分区", *sys.exc_info())
             section = None
+        dt_diag.event(f"拖放：鼠标位置=({x},{y}) "
+                      f"分区={section['box'].get('name') if section else '（没有，按类型自动收纳）'}")
         if section is not None:
             self._on_external_drop_for(paths, section["box"])
         else:
             self._auto_classify(paths)
+        dt_diag.event("拖放：搬运阶段结束，开始刷新面板")
         self.refresh_sections(force=True)
+        dt_diag.event("拖放：刷新完成")
 
     def _auto_classify(self, paths: list[str]) -> None:
         rules = dt_config.all_rules(self.config)
@@ -1003,9 +1018,14 @@ class OrganizerPanel(tk.Toplevel):
             self.flash(errors[0][:60])
         else:
             self.flash("没有可以收纳的文件")
+        dt_diag.event(f"拖放：自动分类结果 {buckets} 错误={errors[:2]}")
 
     def _on_external_drop_for(self, paths: list[str], box: dict) -> None:
-        moved, errors = dt_organize.move_into(paths, dt_config.box_folder(self.config, box))
+        folder = dt_config.box_folder(self.config, box)
+        dt_diag.event(f"拖放：把 {len(paths)} 个文件搬进「{box.get('name', '')}」→ {folder}")
+        moved, errors = dt_organize.move_into(paths, folder)
+        dt_diag.event(f"拖放：搬运结果 moved={len(moved)} errors={len(errors)}"
+                      + (f" 第一个错误={errors[0][:120]}" if errors else ""))
         if moved:
             self.flash(f"已把 {len(moved)} 个文件收进「{box.get('name', '')}」")
         elif errors:

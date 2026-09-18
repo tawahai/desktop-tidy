@@ -17,6 +17,7 @@ from pathlib import Path
 from tkinter import messagebox, simpledialog
 
 import dt_config
+import dt_diag
 import dt_icon
 import dt_organize
 import dt_panel
@@ -53,6 +54,7 @@ class App:
         self._tip: tk.Toplevel | None = None
 
         self.root = tk.Tk()
+        dt_diag.install_tk(self.root)
         self.root.withdraw()  # 只作为宿主，界面上只出现收纳面板
         # 隐藏的宿主窗口不该被关闭：真收到关闭请求就记一笔并收进托盘，绝不静默退出
         self.root.protocol("WM_DELETE_WINDOW", self._root_close)
@@ -190,14 +192,7 @@ class App:
 
     def log_event(self, text: str) -> None:
         """把托盘/退出相关的动作记到托盘日志里，方便排查"莫名退出"。"""
-        try:
-            path = dt_config.appdata_dir() / "tray.log"
-            if path.exists() and path.stat().st_size > 200_000:
-                path.write_text("", encoding="utf-8")
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {text}\n")
-        except Exception:
-            pass
+        dt_diag.event(text)
 
     # ------------------------------------------------------------- 托盘
     def _setup_tray(self) -> None:
@@ -554,9 +549,13 @@ class App:
             self.root.destroy()
         except Exception:
             pass
+        self.log_event("已正常退出（主循环结束）")
 
     def run(self) -> None:
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            self.log_event("mainloop 结束")
 
 
 def single_instance(name: str = "DesktopTidy_SingleInstance") -> bool:
@@ -579,6 +578,7 @@ def write_crash_log(exc_text: str) -> None:
 
 
 def main() -> int:
+    dt_diag.install()
     dt_winapi.make_dpi_aware()
     if not single_instance():
         # 已经在运行：直接把它的面板叫到前面来（贴边隐藏时也能弹出来）
