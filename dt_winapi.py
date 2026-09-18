@@ -1158,6 +1158,9 @@ def autostart_enabled() -> bool:
 
 
 # --------------------------------------------------------------------- 拖入文件
+LAST_DROP_ERROR = ""  # 最近一次启用拖入失败的原因（空字符串表示没出错）
+
+
 class FileDropHook:
     """把资源管理器的文件拖放（WM_DROPFILES）接到 Tk 窗口上。"""
 
@@ -1165,12 +1168,18 @@ class FileDropHook:
         self.hwnd = hwnd
         self.callback = callback
         self.alive = False
+        self.error = ""
         self._old = None
         self._proc = WNDPROC(self._wndproc)  # 必须留引用，回调被回收会崩溃
         try:
-            user32.DragQueryFileW.restype = c_uint
-            user32.DragQueryFileW.argtypes = [c_void_p, c_uint, ctypes.c_wchar_p, c_uint]
-            user32.DragFinish.argtypes = [c_void_p]
+            # DragAcceptFiles / DragQueryFileW / DragFinish 都在 shell32.dll 里，
+            # 之前误写成 user32.DragAcceptFiles —— 会抛 AttributeError 并被静默吞掉，
+            # 结果就是"接受拖放"标志从未设置，拖文件过来一直是红色禁止光标。
+            shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
+            shell32.DragAcceptFiles.restype = None
+            shell32.DragQueryFileW.restype = c_uint
+            shell32.DragQueryFileW.argtypes = [c_void_p, c_uint, ctypes.c_wchar_p, c_uint]
+            shell32.DragFinish.argtypes = [c_void_p]
             user32.CallWindowProcW.restype = LRESULT
             user32.CallWindowProcW.argtypes = [
                 c_void_p, wintypes.HWND, c_uint, wintypes.WPARAM, wintypes.LPARAM
@@ -1179,22 +1188,27 @@ class FileDropHook:
             setter.restype = c_void_p
             setter.argtypes = [wintypes.HWND, c_int, c_void_p]
             self._old = setter(hwnd, GWLP_WNDPROC, ctypes.cast(self._proc, c_void_p))
-            user32.DragAcceptFiles(hwnd, True)
+            shell32.DragAcceptFiles(hwnd, True)
             self.alive = bool(self._old)
         except Exception:
+            import traceback
+
+            self.error = traceback.format_exc()
             self.alive = False
+            global LAST_DROP_ERROR
+            LAST_DROP_ERROR = self.error.strip().splitlines()[-1] if self.error.strip() else "未知错误"
 
     def _wndproc(self, hwnd, msg, wparam, lparam):
         if msg == WM_DROPFILES:
             try:
                 hdrop = c_void_p(wparam)
-                count = user32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+                count = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
                 buf = ctypes.create_unicode_buffer(32768)
                 paths = []
                 for i in range(count):
-                    if user32.DragQueryFileW(hdrop, i, buf, 32768):
+                    if shell32.DragQueryFileW(hdrop, i, buf, 32768):
                         paths.append(buf.value)
-                user32.DragFinish(hdrop)
+                shell32.DragFinish(hdrop)
                 if paths:
                     self.callback(paths)
             except Exception:
@@ -1210,7 +1224,7 @@ class FileDropHook:
         try:
             setter = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
             setter(self.hwnd, GWLP_WNDPROC, ctypes.cast(self._old, c_void_p))
-            user32.DragAcceptFiles(self.hwnd, False)
+            shell32.DragAcceptFiles(self.hwnd, False)
         except Exception:
             pass
         self.alive = False
@@ -1218,9 +1232,12 @@ class FileDropHook:
 
 def enable_file_drop(window, callback) -> list[FileDropHook]:
     """在窗口（及其外层包装窗口）上启用文件拖入。"""
+    global LAST_DROP_ERROR
+    LAST_DROP_ERROR = ""
     hooks: list[FileDropHook] = []
     hwnd = hwnd_of(window)
     if not hwnd:
+        LAST_DROP_ERROR = "取不到窗口句柄"
         return hooks
     hook = FileDropHook(hwnd, callback)
     if hook.alive:
@@ -1233,6 +1250,10 @@ def enable_file_drop(window, callback) -> list[FileDropHook]:
         hook2 = FileDropHook(parent, callback)
         if hook2.alive:
             hooks.append(hook2)
+    if not hooks:
+        LAST_DROP_ERROR = hook.error.strip().splitlines()[-1] if hook.error.strip() else "钩子未安装成功"
+    else:
+        LAST_DROP_ERROR = ""
     return hooks
 
 

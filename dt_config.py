@@ -13,10 +13,10 @@ APPDATA_NAME = "DesktopTidy"
 DEFAULT_CATEGORY = "其他"
 
 # 版本与作者信息（界面上「设置 → 关于」会显示这些）
-APP_VERSION = "3.0"
+APP_VERSION = "3.1"
 APP_AUTHOR = "唐小漫"
 APP_TOOL = "Codex"
-APP_DATE = "2026-09-12"
+APP_DATE = "2026-09-18"
 APP_TECH = "纯 Python 标准库实现，不需要第三方依赖"
 
 # 分类规则：按顺序匹配，先命中的优先。".tar.gz" 这类复合扩展名会优先匹配。

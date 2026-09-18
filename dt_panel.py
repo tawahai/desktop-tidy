@@ -938,11 +938,28 @@ class OrganizerPanel(tk.Toplevel):
 
     # ------------------------------------------------------------- 拖入
     def _install_drop(self) -> None:
+        self._drop_error = ""
         try:
             self.update_idletasks()
-            self._drop_hooks = dt_winapi.enable_file_drop(self, self._on_external_drop)
-        except Exception:
+            # 回调只登记，真正干活交给 after(0)：拖放消息还压在系统消息里，
+            # 直接在窗口过程里搬文件会卡住资源管理器的拖拽循环。
+            self._drop_hooks = dt_winapi.enable_file_drop(self, self._queue_external_drop)
+        except Exception as exc:
             self._drop_hooks = []
+            self._drop_error = f"{type(exc).__name__}: {exc}"
+        if not self._drop_hooks:
+            detail = self._drop_error or dt_winapi.LAST_DROP_ERROR or "未知原因"
+            self._drop_error = detail
+            try:
+                self.app.log_event(f"拖入文件未启用：{detail}")
+            except Exception:
+                pass
+
+    def _queue_external_drop(self, paths: list[str]) -> None:
+        try:
+            self.after(0, lambda: self._on_external_drop(paths))
+        except Exception:
+            pass
 
     def _on_external_drop(self, paths: list[str]) -> None:
         self.clear_selection()
