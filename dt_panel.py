@@ -31,6 +31,7 @@ SLIVER = 6            # 隐藏时留在屏幕上的高度
 DOCK_TRIGGER = 22     # 拖到离屏幕上边缘这么近就贴边
 UNDOCK_DISTANCE = 70  # 往下拖这么多就取消贴边
 REVEAL_POLL_MS = 140
+DROP_POLL_MS = 120    # 拖入的文件由 Tk 定时器取走（窗口过程里不能碰 Tcl）
 HIDE_DELAY = 0.55     # 鼠标离开多久后自动收起
 
 
@@ -49,6 +50,8 @@ class OrganizerPanel(tk.Toplevel):
         self.settings: SettingsView | None = None
         self._current_view = ""
         self._drop_hooks: list = []
+        self._pending_drops: list[str] = []
+        self._drop_job = None
         self._item_drag: dict | None = None
         self._ghost: tk.Toplevel | None = None
         self._hover_section: dict | None = None
@@ -947,12 +950,12 @@ class OrganizerPanel(tk.Toplevel):
         self._drop_error = ""
         try:
             self.update_idletasks()
-            # 回调只登记，真正干活交给 after(0)：拖放消息还压在系统消息里，
-            # 直接在窗口过程里搬文件会卡住资源管理器的拖拽循环。
             self._drop_hooks = dt_winapi.enable_file_drop(self, self._queue_external_drop)
         except Exception as exc:
             self._drop_hooks = []
             self._drop_error = f"{type(exc).__name__}: {exc}"
+        if self._drop_job is None:
+            self._drop_job = self.after(DROP_POLL_MS, self._poll_drops)
         if not self._drop_hooks:
             detail = self._drop_error or dt_winapi.LAST_DROP_ERROR or "未知原因"
             self._drop_error = detail
@@ -962,12 +965,26 @@ class OrganizerPanel(tk.Toplevel):
                 pass
 
     def _queue_external_drop(self, paths: list[str]) -> None:
-        dt_diag.event(f"拖放：窗口过程把 {len(paths)} 个路径排进界面队列")
+        """窗口过程里只允许做这一件事：把路径记下来。
+
+        拖放消息是别的进程（资源管理器）用 SendMessage 送进来的，这时 Tcl 正卡在
+        消息等待里；如果在这个窗口过程里回调任何 Tcl 函数（比如 after / refresh），
+        Tcl 的内部状态会被打乱，进程会毫无征兆地直接崩掉（已实测复现）。
+        所以真正干活的部分交给 Tk 自己的定时器 _poll_drops。
+        """
+        self._pending_drops.extend(paths)
+        dt_diag.event(f"拖放：窗口过程记录 {len(paths)} 个路径，等 Tk 定时器取走")
+
+    def _poll_drops(self) -> None:
+        self._drop_job = self.after(DROP_POLL_MS, self._poll_drops)
+        if not self._pending_drops:
+            return
+        paths = list(self._pending_drops)
+        self._pending_drops.clear()
         try:
-            self.after(0, lambda: self._on_external_drop(paths))
-            dt_diag.event("拖放：已用 after(0) 排好队")
+            self._on_external_drop(paths)
         except Exception:
-            dt_diag.note_exception("拖放排队", *sys.exc_info())
+            dt_diag.note_exception("处理拖入的文件", *sys.exc_info())
 
     def _on_external_drop(self, paths: list[str]) -> None:
         dt_diag.event(f"拖放：界面开始处理 {len(paths)} 个路径")
@@ -1175,7 +1192,7 @@ class OrganizerPanel(tk.Toplevel):
     def close(self) -> None:
         dt_winapi.release_drops(self._drop_hooks)
         self._destroy_ghost()
-        for job in ("_dock_job", "_tick_job", "_save_job", "_relayout_job"):
+        for job in ("_dock_job", "_tick_job", "_save_job", "_relayout_job", "_drop_job"):
             handle = getattr(self, job, None)
             if handle:
                 try:

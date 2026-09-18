@@ -19,8 +19,8 @@ from pathlib import Path
 
 import dt_config
 
-# 排查期开关：装到问题定位后改回 False，日志就不会这么啰嗦
-VERBOSE = True
+# 逐条图标的详细日志（排查时才打开，平时关着免得日志太长）
+VERBOSE = False
 
 _installed = False
 _lock = threading.Lock()
