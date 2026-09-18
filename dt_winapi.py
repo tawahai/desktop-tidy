@@ -355,7 +355,17 @@ def icon_png(path: Path | str, size: int = 48) -> bytes | None:
         is_dir = False
     suffix = path.suffix.lower()
     by_extension = bool(suffix) and not is_dir and suffix not in _REAL_ICON_SUFFIX
-    key = ((suffix if by_extension else str(path)) + ("|d" if is_dir else "|f"), size)
+    if by_extension:
+        key = (suffix, size)
+    else:
+        # 缓存要跟着文件走：快捷方式/图标被替换后（同名同路径），
+        # 修改时间和大小变了就得重新取，否则界面会一直显示旧图标。
+        try:
+            st = path.stat()
+            stamp = f"{st.st_mtime_ns}-{st.st_size}"
+        except OSError:
+            stamp = "0-0"
+        key = (str(path) + ("|d" if is_dir else "|f") + "|" + stamp, size)
     if key in _ICON_CACHE:
         return _ICON_CACHE[key]
 
